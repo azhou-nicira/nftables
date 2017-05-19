@@ -295,6 +295,45 @@ __alloc_nftnl_obj(const struct handle *h, uint32_t type)
 	return nlo;
 }
 
+static struct nftnl_meter_band *
+alloc_nftnl_meter_bands(struct band *bands, int n_bands)
+{
+	struct nftnl_meter_band *nftnl_bands;
+	int i;
+
+	nftnl_bands = nftnl_meter_bands_alloc(n_bands);
+	if (!nftnl_bands)
+		return NULL;
+
+	for (i = 0; i < n_bands; i++) {
+		nftnl_meter_band_set_u64(nftnl_bands, i,
+					 NFTNL_METER_BAND_BYTES,
+					 bands[i].bytes);
+
+		nftnl_meter_band_set_u64(nftnl_bands, i,
+					 NFTNL_METER_BAND_PACKETS,
+					 bands[i].packets);
+
+		nftnl_meter_band_set_u64(nftnl_bands, i,
+					 NFTNL_METER_BAND_UNIT,
+					 bands[i].unit);
+
+		nftnl_meter_band_set_u64(nftnl_bands, i,
+					 NFTNL_METER_BAND_RATE,
+					 bands[i].rate);
+
+		nftnl_meter_band_set_u64(nftnl_bands, i,
+					 NFTNL_METER_BAND_BURST,
+					 bands[i].burst);
+
+		nftnl_meter_band_set_u32(nftnl_bands, i,
+					 NFTNL_METER_BAND_TYPE,
+					 bands[i].type);
+	}
+
+	return nftnl_bands;
+}
+
 static struct nftnl_obj *
 alloc_nftnl_obj(const struct handle *h, struct obj *obj)
 {
@@ -316,6 +355,26 @@ alloc_nftnl_obj(const struct handle *h, struct obj *obj)
 				  obj->quota.used);
 		nftnl_obj_set_u32(nlo, NFTNL_OBJ_QUOTA_FLAGS,
 				  obj->quota.flags);
+		break;
+	case NFT_OBJECT_METER: {
+		int n_bands = obj->meter.n_bands;
+		struct nftnl_meter_band *bands;
+
+		nftnl_obj_set_u64(nlo, NFTNL_OBJ_METER_BYTES,
+				  obj->meter.bytes);
+		nftnl_obj_set_u64(nlo, NFTNL_OBJ_METER_PACKETS,
+				  obj->meter.packets);
+		nftnl_obj_set_u32(nlo, NFTNL_OBJ_METER_FLAGS,
+				  obj->meter.flags);
+
+		if (n_bands == 0)
+			break;
+
+		bands = alloc_nftnl_meter_bands(obj->meter.bands, n_bands);
+		if (bands)
+			nftnl_obj_set_data(nlo, NFTNL_OBJ_METER_BANDS, &bands,
+					   n_bands);
+		}
 		break;
 	case NFT_OBJECT_CT_HELPER:
 		nftnl_obj_set_str(nlo, NFTNL_OBJ_CT_HELPER_NAME,
@@ -1802,6 +1861,34 @@ int netlink_delete_obj(struct netlink_ctx *ctx, const struct handle *h,
 	return err;
 }
 
+static void netlink_delinearlize_meter_band(struct band *band,
+				struct nftnl_meter_band *nftnl_bands,
+				int idx)
+{
+	band->bytes = nftnl_meter_band_get_u64(nftnl_bands, idx,
+					       NFTNL_METER_BAND_BYTES);
+	band->packets = nftnl_meter_band_get_u64(nftnl_bands, idx,
+					         NFTNL_METER_BAND_PACKETS);
+	band->rate = nftnl_meter_band_get_u64(nftnl_bands, idx,
+					      NFTNL_METER_BAND_RATE);
+	band->unit = nftnl_meter_band_get_u64(nftnl_bands, idx,
+					      NFTNL_METER_BAND_UNIT);
+	band->burst = nftnl_meter_band_get_u64(nftnl_bands, idx,
+					      NFTNL_METER_BAND_BURST);
+	band->type = nftnl_meter_band_get_u32(nftnl_bands, idx,
+					      NFTNL_METER_BAND_TYPE);
+}
+
+static void netlink_delinearlize_meter_bands(struct band *bands,
+				struct nftnl_meter_band *nftnl_bands,
+				int n_bands)
+{
+	int i;
+	for (i = 0; i < n_bands; i++)
+		netlink_delinearlize_meter_band(&bands[i], nftnl_bands, i);
+}
+
+
 static struct obj *netlink_delinearize_obj(struct netlink_ctx *ctx,
 					   struct nftnl_obj *nlo)
 {
@@ -1837,6 +1924,28 @@ static struct obj *netlink_delinearize_obj(struct netlink_ctx *ctx,
 		obj->ct.l3proto = nftnl_obj_get_u16(nlo, NFTNL_OBJ_CT_HELPER_L3PROTO);
 		obj->ct.l4proto = nftnl_obj_get_u8(nlo, NFTNL_OBJ_CT_HELPER_L4PROTO);
 		break;
+	case NFT_OBJECT_METER: {
+		struct nftnl_meter_band *const *nftnl_bands;
+		uint32_t n_bands;
+
+		obj->meter.bytes =
+			nftnl_obj_get_u64(nlo, NFTNL_OBJ_METER_BYTES);
+		obj->meter.packets =
+			nftnl_obj_get_u64(nlo, NFTNL_OBJ_METER_PACKETS);
+		obj->meter.flags =
+			nftnl_obj_get_u32(nlo, NFTNL_OBJ_METER_FLAGS);
+
+		nftnl_bands = nftnl_obj_get_data(nlo, NFTNL_OBJ_METER_BANDS,
+						 &n_bands);
+		if (n_bands) {
+			struct band *bands = xzalloc(sizeof *bands * n_bands);
+			netlink_delinearlize_meter_bands(bands, *nftnl_bands,
+					n_bands);
+			obj->meter.bands = bands;
+			obj->meter.n_bands = n_bands;
+		}
+		break;
+		}
 	}
 	obj->type = type;
 

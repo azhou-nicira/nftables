@@ -175,6 +175,7 @@ static const char *objref_type[NFT_OBJECT_MAX + 1] = {
 	[NFT_OBJECT_COUNTER]	= "counter",
 	[NFT_OBJECT_QUOTA]	= "quota",
 	[NFT_OBJECT_CT_HELPER]	= "cthelper",
+	[NFT_OBJECT_METER]	= "meter",
 };
 
 static const char *objref_type_name(uint32_t type)

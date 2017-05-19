@@ -136,6 +136,8 @@ static void location_update(struct location *loc, struct location *rhs, int n)
 	struct obj		*obj;
 	struct counter		*counter;
 	struct quota		*quota;
+	struct meter		*meter;
+	struct band		*band;
 	struct ct		*ct;
 	const struct datatype	*datatype;
 	struct handle_spec	handle_spec;
@@ -384,9 +386,12 @@ static void location_update(struct location *loc, struct location *rhs, int n)
 %token PACKETS			"packets"
 %token BYTES			"bytes"
 %token AVGPKT			"avgpkt"
+%token METER			"meter"
+%token BAND			"band"
 
 %token COUNTERS			"counters"
 %token QUOTAS			"quotas"
+%token METERS			"meters"
 
 %token LOG			"log"
 %token PREFIX			"prefix"
@@ -495,7 +500,7 @@ static void location_update(struct location *loc, struct location *rhs, int n)
 %type <set>			map_block_alloc map_block
 %destructor { set_free($$); }	map_block_alloc
 
-%type <obj>			obj_block_alloc counter_block quota_block ct_block
+%type <obj>			obj_block_alloc counter_block quota_block ct_block meter_block
 %destructor { obj_free($$); }	obj_block_alloc
 
 %type <list>			stmt_list
@@ -504,6 +509,8 @@ static void location_update(struct location *loc, struct location *rhs, int n)
 %destructor { stmt_free($$); }	stmt match_stmt verdict_stmt
 %type <stmt>			counter_stmt counter_stmt_alloc
 %destructor { stmt_free($$); }	counter_stmt counter_stmt_alloc
+%type <stmt>			meter_stmt
+%destructor { stmt_free($$); }	meter_stmt
 %type <stmt>			payload_stmt
 %destructor { stmt_free($$); }	payload_stmt
 %type <stmt>			ct_stmt
@@ -583,8 +590,8 @@ static void location_update(struct location *loc, struct location *rhs, int n)
 %type <expr>			and_rhs_expr exclusive_or_rhs_expr inclusive_or_rhs_expr
 %destructor { expr_free($$); }	and_rhs_expr exclusive_or_rhs_expr inclusive_or_rhs_expr
 
-%type <obj>			counter_obj quota_obj ct_obj_alloc
-%destructor { obj_free($$); }	counter_obj quota_obj ct_obj_alloc
+%type <obj>			counter_obj quota_obj meter_obj ct_obj_alloc
+%destructor { obj_free($$); }	counter_obj quota_obj meter_obj ct_obj_alloc
 
 %type <expr>			relational_expr
 %destructor { expr_free($$); }	relational_expr
@@ -655,6 +662,8 @@ static void location_update(struct location *loc, struct location *rhs, int n)
 %destructor { xfree($$); }	counter_config
 %type <quota>			quota_config
 %destructor { xfree($$); }	quota_config
+%type <meter>			meter_config
+%destructor { xfree($$); }	meter_config
 
 %type <expr>			tcp_hdr_expr
 %destructor { expr_free($$); }	tcp_hdr_expr
@@ -835,6 +844,15 @@ add_cmd			:	TABLE		table_spec
 				handle_merge(&obj->handle, &$2);
 				$$ = cmd_alloc(CMD_ADD, CMD_OBJ_COUNTER, &$2, &@$, obj);
 			}
+			|	METER		obj_spec
+			{
+				struct obj *obj;
+
+				obj = obj_alloc(&@$);
+				obj->type = NFT_OBJECT_METER;
+				handle_merge(&obj->handle, &$2);
+				$$ = cmd_alloc(CMD_ADD, CMD_OBJ_METER, &$2, &@$, obj);
+			}
 			|	COUNTER		obj_spec	counter_obj
 			{
 				$$ = cmd_alloc(CMD_ADD, CMD_OBJ_COUNTER, &$2, &@$, $3);
@@ -842,6 +860,10 @@ add_cmd			:	TABLE		table_spec
 			|	QUOTA		obj_spec	quota_obj
 			{
 				$$ = cmd_alloc(CMD_ADD, CMD_OBJ_QUOTA, &$2, &@$, $3);
+			}
+			|	METER		obj_spec	meter_obj
+			{
+				$$ = cmd_alloc(CMD_ADD, CMD_OBJ_METER, &$2, &@$, $3);
 			}
 			|	CT	STRING	obj_spec	ct_obj_alloc	'{' ct_block '}'	stmt_seperator
 			{
@@ -922,6 +944,10 @@ create_cmd		:	TABLE		table_spec
 			{
 				$$ = cmd_alloc(CMD_CREATE, CMD_OBJ_QUOTA, &$2, &@$, $3);
 			}
+			|	METER		obj_spec	meter_obj
+			{
+				$$ = cmd_alloc(CMD_CREATE, CMD_OBJ_METER, &$2, &@$, $3);
+			}
 			|	CT	STRING	obj_spec	ct_obj_alloc	'{' ct_block '}'	stmt_seperator
 			{
 				struct error_record *erec;
@@ -988,7 +1014,11 @@ delete_cmd		:	TABLE		table_spec
 
 				$$ = cmd_alloc_obj_ct(CMD_DELETE, type, &$3, &@$, $4);
 			}
-			;
+			|	METER		obj_spec
+			{
+				$$ = cmd_alloc(CMD_DELETE, CMD_OBJ_METER, &$2, &@$, NULL);
+			}
+			|	;
 
 list_cmd		:	TABLE		table_spec
 			{
@@ -1041,6 +1071,18 @@ list_cmd		:	TABLE		table_spec
 			|	QUOTA		obj_spec
 			{
 				$$ = cmd_alloc(CMD_LIST, CMD_OBJ_QUOTA, &$2, &@$, NULL);
+			}
+			|	METERS		ruleset_spec
+			{
+				$$ = cmd_alloc(CMD_LIST, CMD_OBJ_METERS, &$2, &@$, NULL);
+			}
+			|	METERS		TABLE	table_spec
+			{
+				$$ = cmd_alloc(CMD_LIST, CMD_OBJ_METERS, &$3, &@$, NULL);
+			}
+			|	METER		obj_spec
+			{
+				$$ = cmd_alloc(CMD_LIST, CMD_OBJ_METER, &$2, &@$, NULL);
 			}
 			|	RULESET		ruleset_spec
 			{
@@ -1119,6 +1161,18 @@ reset_cmd		:	COUNTERS	ruleset_spec
 			|       QUOTA           obj_spec
 			{
 				$$ = cmd_alloc(CMD_RESET, CMD_OBJ_QUOTA, &$2, &@$, NULL);
+			}
+			|       METERS           ruleset_spec
+			{
+				$$ = cmd_alloc(CMD_RESET, CMD_OBJ_METERS, &$2, &@$, NULL);
+			}
+			|	METERS		TABLE	table_spec
+			{
+				$$ = cmd_alloc(CMD_RESET, CMD_OBJ_METERS, &$3, &@$, NULL);
+			}
+			|       METER         obj_spec
+			{
+				$$ = cmd_alloc(CMD_RESET, CMD_OBJ_METER, &$2,&@$, NULL);
 			}
 			;
 
@@ -1282,7 +1336,18 @@ table_block		:	/* empty */	{ $$ = $<table>-1; }
 				list_add_tail(&$4->list, &$1->objs);
 				$$ = $1;
 			}
-			|	table_block	CT	ct_obj_kind	obj_identifier  obj_block_alloc '{'     ct_block     '}' stmt_seperator
+			|	table_block	METER		obj_identifier
+					obj_block_alloc	'{'	meter_block	'}'
+					stmt_seperator
+			{
+				$4->location = @3;
+				$4->type = NFT_OBJECT_METER;
+				handle_merge(&$4->handle, &$3);
+				handle_free(&$3);
+				list_add_tail(&$4->list, &$1->objs);
+				$$ = $1;
+			}
+			|	table_block	CT	ct_obj_kind	obj_identifier  obj_block_alloc '{'     ct_block     '}' 			|	table_block	CT	ct_obj_kind	obj_identifier  obj_block_alloc '{'     ct_block     '}' stmt_seperator
 			{
 				struct error_record *erec;
 				int type;
@@ -1503,6 +1568,14 @@ ct_block		:	/* empty */	{ $$ = $<obj>-1; }
 			}
 			;
 
+meter_block		:	/* empty */	{ $$ = $<obj>-1; }
+			|       meter_block     common_block
+			|       meter_block     stmt_seperator
+			|       meter_block     meter_config
+			{
+				$$ = $1;
+			}
+			;
 
 type_identifier		:	STRING	{ $$ = $1; }
 			|	MARK	{ $$ = xstrdup("mark"); }
@@ -1741,6 +1814,7 @@ stmt			:	verdict_stmt
 			|	counter_stmt
 			|	payload_stmt
 			|	meta_stmt
+			|	meter_stmt
 			|	log_stmt
 			|	limit_stmt
 			|	quota_stmt
@@ -1833,6 +1907,14 @@ counter_arg		:	PACKETS			NUM
 			|	BYTES			NUM
 			{
 				$<stmt>0->counter.bytes	 = $2;
+			}
+			;
+
+meter_stmt		:	METER		NAME	stmt_expr
+			{
+				$$ = objref_stmt_alloc(&@$);
+				$$->objref.type = NFT_OBJECT_METER;
+				$$->objref.expr = $3;
 			}
 			;
 
@@ -2669,6 +2751,56 @@ counter_obj		:	counter_config
 			}
 			;
 
+meter_config		:	BAND RATE NUM SLASH time_unit limit_burst
+			{
+				struct meter *meter;
+				struct band *band;
+
+				meter = xzalloc(sizeof(*meter) + sizeof *band);
+				meter->flags |= NFT_METER_F_PPS;
+				meter->n_bands = 1;
+				band = (struct band *)(meter + 1);
+				meter->bands = band;
+
+				band->rate	= $3;
+				band->unit	= $5;
+				band->burst	= $6;
+				band->type	= 0;   /* Drop */
+				$$ = meter;
+			}
+			|	BAND RATE NUM STRING limit_burst
+			{
+				struct error_record *erec;
+				uint64_t rate, unit;
+				struct meter *meter;
+				struct band *band;
+
+				erec = rate_parse(&@$, $4, &rate, &unit);
+				if (erec != NULL) {
+					erec_queue(erec, state->msgs);
+					YYERROR;
+				}
+
+				meter = xzalloc(sizeof(*meter) + sizeof *band);
+				meter->flags = 0; /*NFT_METER_F_KBPS */;
+				meter->n_bands = 1;
+				band = (struct band *)(meter + 1);
+				meter->bands = band;
+
+				band->rate	= rate * $3;
+				band->unit	= unit;
+				band->burst	= $5;
+				band->type	= 0;  /* Drop */;
+				$$ = meter;
+			}
+			;
+meter_obj		:	meter_config
+			{
+				$$ = obj_alloc(&@$);
+				$$->type = NFT_OBJECT_METER;
+				$$->meter = *$1;
+			}
+			;
 quota_config		:	quota_mode NUM quota_unit quota_used
 			{
 				struct error_record *erec;

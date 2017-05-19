@@ -885,6 +885,7 @@ void cmd_free(struct cmd *cmd)
 			break;
 		case CMD_OBJ_COUNTER:
 		case CMD_OBJ_QUOTA:
+		case CMD_OBJ_METER:
 		case CMD_OBJ_CT_HELPER:
 			obj_free(cmd->object);
 			break;
@@ -1008,6 +1009,7 @@ static int do_command_add(struct netlink_ctx *ctx, struct cmd *cmd, bool excl)
 	case CMD_OBJ_COUNTER:
 	case CMD_OBJ_QUOTA:
 	case CMD_OBJ_CT_HELPER:
+	case CMD_OBJ_METER:
 		return netlink_add_obj(ctx, &cmd->handle, cmd->object, excl);
 	default:
 		BUG("invalid command object type %u\n", cmd->obj);
@@ -1078,6 +1080,9 @@ static int do_command_delete(struct netlink_ctx *ctx, struct cmd *cmd)
 	case CMD_OBJ_QUOTA:
 		return netlink_delete_obj(ctx, &cmd->handle, &cmd->location,
 					  NFT_OBJECT_QUOTA);
+	case CMD_OBJ_METER:
+		return netlink_delete_obj(ctx, &cmd->handle, &cmd->location,
+					  NFT_OBJECT_METER);
 	case CMD_OBJ_CT_HELPER:
 		return netlink_delete_obj(ctx, &cmd->handle, &cmd->location,
 					  NFT_OBJECT_CT_HELPER);
@@ -1193,6 +1198,48 @@ static void print_proto_name_proto(uint8_t l4)
 		printf("%d\n", l4);
 }
 
+/* XXX common code with src/statement.c ? */
+static const char *get_unit(uint64_t u)
+{
+	switch (u) {
+	case 1: return "second";
+	case 60: return "minute";
+	case 60 * 60: return "hour";
+	case 60 * 60 * 24: return "day";
+	case 60 * 60 * 24 * 7: return "week";
+	}
+
+	return "error";
+}
+
+static void print_meter_band(struct band *band, bool meter_packets,
+			     struct print_fmt_options *opts)
+{
+	printf("%s%s%s", opts->nl, opts->tab, opts->tab);
+	if (meter_packets) {
+		printf("rate %" PRIu64 "/%s", band->rate, get_unit(band->unit));
+		if (band->burst > 0)
+			printf(" burst %" PRIu64 " packets",
+					band->burst);
+	} else {
+		const char *data_unit;
+		uint64_t rate;
+		data_unit = get_rate(band->rate, &rate);
+		printf("rate %" PRIu64 " %s/%s", band->rate, data_unit,
+			get_unit(band->unit));
+		if (band->burst > 0) {
+			uint64_t burst;
+
+			data_unit = get_rate(band->burst, &burst);
+			printf(" burst %" PRIu64 " %s", burst, data_unit);
+		}
+	}
+
+	printf("%s%s%s%s", opts->nl, opts->tab,opts->tab, opts->tab);
+	printf("packets %"PRIu64" bytes %"PRIu64"%s", band->packets,
+		band->bytes, opts->nl);
+}
+
 static void obj_print_data(const struct obj *obj,
 			   struct print_fmt_options *opts)
 {
@@ -1230,6 +1277,19 @@ static void obj_print_data(const struct obj *obj,
 		printf("\t\tl3proto %s", family2str(obj->ct.l3proto));
 		break;
 		}
+	case NFT_OBJECT_METER: {
+		int i;
+		printf(" %s {%s%s%s", obj->handle.obj,
+				      opts->nl, opts->tab, opts->tab);
+		printf("packets %"PRIu64" bytes %"PRIu64"",
+		       obj->meter.packets, obj->meter.bytes);
+		for (i = 0; i< obj->meter.n_bands; i++) {
+			print_meter_band(&obj->meter.bands[i],
+					 obj->meter.flags & NFT_METER_F_PPS,
+					 opts);
+		}
+		break;
+		}
 	default:
 		printf("unknown {%s", opts->nl);
 		break;
@@ -1240,11 +1300,12 @@ static const char *obj_type_name_array[] = {
 	[NFT_OBJECT_COUNTER]	= "counter",
 	[NFT_OBJECT_QUOTA]	= "quota",
 	[NFT_OBJECT_CT_HELPER]	= "",
+	[NFT_OBJECT_METER]	= "meter",
 };
 
 const char *obj_type_name(enum stmt_types type)
 {
-	assert(type <= NFT_OBJECT_CT_HELPER && obj_type_name_array[type]);
+	assert(type <= NFT_OBJECT_MAX && obj_type_name_array[type]);
 
 	return obj_type_name_array[type];
 }
@@ -1465,6 +1526,9 @@ static int do_command_list(struct netlink_ctx *ctx, struct cmd *cmd)
 	case CMD_OBJ_QUOTA:
 	case CMD_OBJ_QUOTAS:
 		return do_list_obj(ctx, cmd, NFT_OBJECT_QUOTA);
+	case CMD_OBJ_METER:
+	case CMD_OBJ_METERS:
+		return do_list_obj(ctx, cmd, NFT_OBJECT_METER);
 	case CMD_OBJ_CT_HELPER:
 	case CMD_OBJ_CT_HELPERS:
 		return do_list_obj(ctx, cmd, NFT_OBJECT_CT_HELPER);
@@ -1493,6 +1557,11 @@ static int do_command_reset(struct netlink_ctx *ctx, struct cmd *cmd)
 		dump = true;
 	case CMD_OBJ_QUOTA:
 		type = NFT_OBJECT_QUOTA;
+		break;
+	case CMD_OBJ_METERS:
+		dump = true;
+	case CMD_OBJ_METER:
+		type = NFT_OBJECT_METER;
 		break;
 	default:
 		BUG("invalid command object type %u\n", cmd->obj);

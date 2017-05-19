@@ -266,6 +266,23 @@ struct ct {
 	uint8_t l4proto;
 };
 
+struct band {
+	uint64_t bytes;
+	uint64_t packets;
+	uint64_t rate;
+	uint64_t unit;
+	uint64_t burst;
+	uint32_t type;   /* Drop of DSCP */
+};
+
+struct meter {
+	 uint32_t flags;    /* PKT or BITS */
+	 uint64_t bytes;
+	 uint64_t packets;
+	 int n_bands;
+	 struct band *bands;   /* Array of size 'n_bands' */
+};
+
 /**
  * struct obj - nftables stateful object statement
  *
@@ -283,6 +300,7 @@ struct obj {
 	union {
 		struct counter		counter;
 		struct quota		quota;
+		struct meter		meter;
 		struct ct		ct;
 	};
 };
@@ -348,6 +366,8 @@ enum cmd_ops {
  * @CMD_OBJ_COUNTERS:	multiple counters
  * @CMD_OBJ_QUOTA:	quota
  * @CMD_OBJ_QUOTAS:	multiple quotas
+ * @CMD_OBJ_METER:	meter
+ * @CMD_OBJ_METERS:	multiple meters
  */
 enum cmd_obj {
 	CMD_OBJ_INVALID,
@@ -372,6 +392,8 @@ enum cmd_obj {
 	CMD_OBJ_QUOTAS,
 	CMD_OBJ_CT_HELPER,
 	CMD_OBJ_CT_HELPERS,
+	CMD_OBJ_METER,
+	CMD_OBJ_METERS,
 };
 
 struct export {
