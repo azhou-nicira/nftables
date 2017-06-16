@@ -1236,8 +1236,7 @@ static void print_meter_band(struct band *band, bool meter_packets,
 	}
 
 	printf("%s%s%s%s", opts->nl, opts->tab,opts->tab, opts->tab);
-	printf("packets %"PRIu64" bytes %"PRIu64"%s", band->packets,
-		band->bytes, opts->nl);
+	printf("packets %"PRIu64" bytes %"PRIu64, band->packets, band->bytes);
 }
 
 static void obj_print_data(const struct obj *obj,
